@@ -1681,6 +1681,11 @@ skia_component("skia") {
         "Usp10.lib",
       ]
     }
+  } else if (is_horizon) {
+    sources += [
+      "src/ports/SkOSFile_posix.cpp",
+      "src/ports/SkDebug_stdio.cpp",
+    ]
   } else {
     sources += [ "src/ports/SkOSFile_posix.cpp" ]
     if (is_ios) {
@@ -2132,6 +2137,9 @@ if (skia_enable_tools) {
       if (is_android || skia_use_egl) {
         sources += [ "tools/gpu/gl/egl/CreatePlatformGLTestContext_egl.cpp" ]
         libs += [ "EGL" ]
+        if (is_horizon) {
+          libs += [  "nx", "glapi", "drm_nouveau" ]
+        }
       } else if (is_linux) {
         sources += [ "tools/gpu/gl/glx/CreatePlatformGLTestContext_glx.cpp" ]
         libs += [
@@ -2547,7 +2555,7 @@ if (skia_enable_tools) {
       "//third_party/libpng",
     ]
   }
-  if (target_cpu != "wasm") {
+  if (target_cpu != "wasm" && !is_horizon) {
     test_app("convert-to-nia") {
       sources = [ "tools/convert-to-nia.cpp" ]
       deps = [ ":skia" ]
@@ -2612,7 +2620,7 @@ if (skia_enable_tools) {
     }
   }
 
-  if (!is_win) {
+  if (!is_win && !is_horizon) {
     test_app("blob_cache_sim") {
       sources = [ "tools/blob_cache_sim.cpp" ]
       deps = [
@@ -2622,6 +2630,7 @@ if (skia_enable_tools) {
     }
   }
 
+  if (!is_horizon) {
   test_app("nanobench") {
     sources = [
       "bench/nanobench.cpp",
@@ -2645,7 +2654,9 @@ if (skia_enable_tools) {
       "modules/svg",
     ]
   }
+  }
 
+  if (!is_horizon) {
   test_app("skpinfo") {
     sources = [ "tools/skpinfo.cpp" ]
     configs = [ ":use_skia_vulkan_headers" ]
@@ -2653,6 +2664,7 @@ if (skia_enable_tools) {
       ":flags",
       ":skia",
     ]
+  }
   }
 
   if (skia_use_ffmpeg) {
@@ -2669,6 +2681,7 @@ if (skia_enable_tools) {
     }
   }
 
+  if (!is_horizon) {
   test_app("skpbench") {
     sources = [
       "bench/BigPath.cpp",
@@ -2682,6 +2695,7 @@ if (skia_enable_tools) {
       ":skia",
       ":tool_utils",
     ]
+  }
   }
 
   if (is_linux && skia_use_icu) {
@@ -2705,7 +2719,7 @@ if (skia_enable_tools) {
     }
   }
 
-  if (skia_use_expat) {
+  if (skia_use_expat && !is_horizon) {
     test_app("create_test_font_color") {
       sources = [ "tools/fonts/create_test_font_color.cpp" ]
       deps = [
@@ -2717,6 +2731,7 @@ if (skia_enable_tools) {
     }
   }
 
+  if (!is_horizon) {
   test_app("get_images_from_skps") {
     sources = [ "tools/get_images_from_skps.cpp" ]
     deps = [
@@ -2724,8 +2739,9 @@ if (skia_enable_tools) {
       ":skia",
     ]
   }
+  }
 
-  if (!is_ios && target_cpu != "wasm" &&
+  if (!is_ios && !is_horizon && target_cpu != "wasm" &&
       !((is_win || is_mac) && target_cpu == "arm64")) {
     test_app("skiaserve") {
       sources = [
@@ -2758,6 +2774,7 @@ if (skia_enable_tools) {
     }
   }
 
+  if (!is_horizon) {
   test_app("fuzz") {
     sources = [
       "fuzz/Fuzz.cpp",
@@ -2851,8 +2868,9 @@ if (skia_enable_tools) {
       ":tool_utils",
     ]
   }
+  }
 
-  if (!is_win) {
+  if (!is_win && !is_horizon) {
     source_set("skqp_lib") {  # Not a skia_source_set
       check_includes = false
       testonly = true
@@ -3052,7 +3070,7 @@ if (skia_enable_tools) {
   }
 
   # sk_app can work without GL but viewer always runs raster through a GL window context.
-  if (skia_use_gl) {
+  if (skia_use_gl && !is_horizon) {
     test_app("viewer") {
       is_shared_library = is_android
       sources = [
@@ -3222,9 +3240,11 @@ if (skia_enable_tools) {
     }
   }
 
+  if (!is_horizon) {
   skia_executable("image_diff_metric") {
     sources = [ "tools/image_diff_metric.cpp" ]
     deps = [ ":skia" ]
+  }
   }
 
   group("modules_testonly") {

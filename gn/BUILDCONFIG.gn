@@ -31,6 +31,8 @@ declare_args() {
   clang_win = ""
   clang_win_version = ""
 
+  devkitpro = getenv("DEVKITPRO")
+
   ios_min_target = ""
   ios_use_simulator =
       target_os == "ios" && (target_cpu == "x86" || target_cpu == "x64")
@@ -71,6 +73,7 @@ is_linux = current_os == "linux"
 is_mac = current_os == "mac"
 is_wasm = current_os == "wasm"
 is_win = current_os == "win"
+is_horizon = current_os == "horizon"
 
 # This is just to make the Dawn build files happy. Skia itself uses target_os = "linux"
 # for ChromeOS, so this variable will not affect Skia proper.
@@ -81,7 +84,7 @@ is_apple = is_mac || is_ios
 
 if (target_cpu == "") {
   target_cpu = host_cpu
-  if (is_android || is_ios) {
+  if (is_android || is_ios || is_horizon) {
     target_cpu = "arm64"
   }
 }
@@ -101,6 +104,9 @@ if (!is_clang && !is_win) {
                            cxx,
                          ],
                          "value")
+}
+if (is_horizon) {
+  is_clang = false
 }
 
 if (is_android) {

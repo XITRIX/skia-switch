@@ -365,7 +365,7 @@ static void find_culprit() {
     }
 #else
     #include <signal.h>
-    #if !defined(SK_BUILD_FOR_ANDROID)
+    #if !defined(SK_BUILD_FOR_ANDROID) && !defined(SK_BUILD_FOR_HORIZON)
         #include <execinfo.h>
     #endif
 
@@ -389,7 +389,7 @@ static void find_culprit() {
         }
         find_culprit();
 
-    #if !defined(SK_BUILD_FOR_ANDROID)
+    #if !defined(SK_BUILD_FOR_ANDROID) && !defined(SK_BUILD_FOR_HORIZON)
         void* stack[128];
         int count = backtrace(stack, std::size(stack));
         char** symbols = backtrace_symbols(stack, count);
