@@ -8,7 +8,7 @@ import("../zlib/zlib.gni")
 declare_args() {
   # TODO: build from source all the time for testing?
   skia_use_system_freetype2 =
-      (is_official_build || !(is_android || sanitize == "MSAN")) &&
+      (is_official_build || is_horizon || !(is_android || sanitize == "MSAN")) &&
       !is_fuchsia && !is_wasm
   skia_system_freetype2_include_path = "/usr/include/freetype2"
   skia_system_freetype2_lib = "freetype"
@@ -23,7 +23,11 @@ import("../third_party.gni")
 
 if (skia_use_system_freetype2) {
   system("freetype2") {
-    include_dirs = [ skia_system_freetype2_include_path ]
+    if (is_horizon) {
+      include_dirs = [ "$devkitpro/portlibs/switch/include/freetype2" ]
+    } else {
+      include_dirs = [ skia_system_freetype2_include_path ]
+    }
     libs = [ skia_system_freetype2_lib ]
   }
 } else {

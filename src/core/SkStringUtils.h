@@ -37,6 +37,8 @@ SkString SkStringFromUTF16(const uint16_t* src, size_t count);
 
 #if defined(SK_BUILD_FOR_WIN)
     #define SK_strcasecmp   _stricmp
+#elif defined(SK_BUILD_FOR_HORIZON)
+    int SK_strcasecmp(const char* s1, const char* s2);
 #else
     #define SK_strcasecmp   strcasecmp
 #endif
