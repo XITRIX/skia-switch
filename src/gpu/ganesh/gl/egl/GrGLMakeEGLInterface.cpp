@@ -17,9 +17,14 @@
 
 static GrGLFuncPtr egl_get_gl_proc(void* ctx, const char name[]) {
     SkASSERT(nullptr == ctx);
+
+#ifndef SK_BUILD_FOR_HORIZON
+    // https://www.khronos.org/registry/EGL/extensions/KHR/EGL_KHR_get_all_proc_addresses.txt
+    // eglGetProcAddress() is not guaranteed to support the querying of non-extension EGL functions.
     #define M(X) if (0 == strcmp(#X, name)) { return (GrGLFuncPtr) X; }
     GR_GL_CORE_FUNCTIONS_EACH(M)
     #undef M
+#endif
     return eglGetProcAddress(name);
 }
 
