@@ -58,6 +58,8 @@ config("default") {
   defines = []
   ldflags = []
   libs = []
+  include_dirs = []
+  lib_dirs = []
 
   # Disable warnings about unknown attributes.
   # (These unknown attribute warnings are on by default, so we don't make
@@ -201,6 +203,19 @@ config("default") {
         "-fshow-skipped-includes",
       ]
     }
+  }
+
+  if (is_horizon) {
+    defines += [ "__SWITCH__", "_GNU_SOURCE" ]
+    include_dirs += [
+      "$devkitpro/portlibs/switch/include",
+      "$devkitpro/libnx/include",
+    ]
+    lib_dirs += [
+      "$devkitpro/portlibs/switch/lib",
+      "$devkitpro/libnx/lib",
+    ]
+    libs += [ "nx", "drm_nouveau" ]
   }
 
   if (is_ios) {

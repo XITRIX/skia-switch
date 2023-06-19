@@ -4,5 +4,5 @@
 # found in the LICENSE file.
 
 declare_args() {
-  skia_use_system_zlib = is_official_build
+  skia_use_system_zlib = is_official_build || is_horizon
 }

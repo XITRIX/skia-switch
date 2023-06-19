@@ -29,6 +29,11 @@ declare_args() {
     cflags = "--sysroot=" +
              rebase_path("$fuchsia_toolchain_path/$target_cpu/sysroot")
     link = rebase_path("$fuchsia_toolchain_path/bin/ld.lld")
+  } else if (is_horizon) {
+    _prefix = "$devkitpro/devkitA64/bin/aarch64-none-elf"
+    target_ar = "$_prefix-ar"
+    target_cc = "$_prefix-gcc"
+    target_cxx = "$_prefix-c++"
   } else {
     target_ar = ar
     target_cc = cc
