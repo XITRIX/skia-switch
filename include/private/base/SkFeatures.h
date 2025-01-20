@@ -33,6 +33,12 @@
     #endif
 #endif // end SK_BUILD_FOR_*
 
+#if defined(SK_BUILD_FOR_HORIZON)
+    #define SK_THREAD_LOCAL
+#else
+    #define SK_THREAD_LOCAL thread_local
+#endif
+
 
 #if defined(SK_BUILD_FOR_WIN) && !defined(__clang__)
     #if !defined(SK_RESTRICT)

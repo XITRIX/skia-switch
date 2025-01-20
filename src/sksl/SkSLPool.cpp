@@ -13,7 +13,7 @@
 
 namespace SkSL {
 
-static thread_local MemoryPool* sMemPool = nullptr;
+static SK_THREAD_LOCAL MemoryPool* sMemPool = nullptr;
 
 static MemoryPool* get_thread_local_memory_pool() {
     return sMemPool;
