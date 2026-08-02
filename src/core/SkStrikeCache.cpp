@@ -12,6 +12,7 @@
 #include "include/core/SkTraceMemoryDump.h"
 #include "include/private/SkAssert.h"
 #include "include/private/SkDebug.h"
+#include "include/private/SkFeatures.h"
 #include "include/private/SkMutex.h"
 #include "src/core/SkDescriptor.h"
 #include "src/core/SkStrike.h"
@@ -19,6 +20,10 @@
 
 #include <algorithm>
 #include <utility>
+
+#if defined(SK_BUILD_FOR_HORIZON)
+#include <pthread.h>
+#endif
 
 class SkScalerContext;
 struct SkFontMetrics;
@@ -29,7 +34,22 @@ bool gSkUseThreadLocalStrikeCaches_IAcknowledgeThisIsIncrediblyExperimental = fa
 
 SkStrikeCache* SkStrikeCache::GlobalStrikeCache() {
     if (gSkUseThreadLocalStrikeCaches_IAcknowledgeThisIsIncrediblyExperimental) {
+#if defined(SK_BUILD_FOR_HORIZON)
+        // Horizon's TPIDR_EL0 is not a C++ TLS base. libnx pthread keys provide
+        // the per-thread cache without emitting a thread_local access.
+        static pthread_key_t cacheKey;
+        static pthread_once_t cacheKeyOnce = PTHREAD_ONCE_INIT;
+        SkASSERT_RELEASE(pthread_once(&cacheKeyOnce, [] {
+            SkASSERT_RELEASE(pthread_key_create(&cacheKey, nullptr) == 0);
+        }) == 0);
+        auto* cache = static_cast<SkStrikeCache*>(pthread_getspecific(cacheKey));
+        if (cache == nullptr) {
+            cache = new SkStrikeCache;
+            SkASSERT_RELEASE(pthread_setspecific(cacheKey, cache) == 0);
+        }
+#else
         static thread_local auto* cache = new SkStrikeCache;
+#endif
         return cache;
     }
     static auto* cache = new SkStrikeCache;
@@ -339,5 +359,4 @@ const SkDescriptor& SkStrikeCache::StrikeTraits::GetKey(const sk_sp<SkStrike>& s
 uint32_t SkStrikeCache::StrikeTraits::Hash(const SkDescriptor& descriptor) {
     return descriptor.getChecksum();
 }
-
 

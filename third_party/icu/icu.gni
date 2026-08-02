@@ -6,7 +6,7 @@ _src = "../externals/icu/source"
 import("../../gn/skia.gni")
 
 declare_args() {
-  skia_use_system_icu = is_official_build && !is_canvaskit
+  skia_use_system_icu = is_official_build && !is_canvaskit && !is_horizon
 }
 
 icu_sources = [

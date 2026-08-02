@@ -1,0 +1,566 @@
+diff --git a/src/dawn/common/DynamicLib.cpp b/src/dawn/common/DynamicLib.cpp
+index d155e490d..abfd816b9 100644
+--- a/src/dawn/common/DynamicLib.cpp
++++ b/src/dawn/common/DynamicLib.cpp
+@@ -37,6 +37,7 @@
+ #if DAWN_PLATFORM_IS(WINUWP)
+ #include "src/dawn/common/WindowsUtils.h"
+ #endif
++#elif DAWN_PLATFORM_IS(HORIZON)
+ #elif DAWN_PLATFORM_IS(POSIX)
+ #include <dlfcn.h>
+ #else
+@@ -100,6 +101,10 @@ bool DynamicLib::Open(const std::string& filename, std::string* error) {
+         *error =
+             "DynamicLib.Open: " + filename + " Windows Error: " + std::to_string(GetLastError());
+     }
++#elif DAWN_PLATFORM_IS(HORIZON)
++    if (error != nullptr) {
++        *error = "Dynamic libraries are not supported on Horizon";
++    }
+ #elif DAWN_PLATFORM_IS(POSIX)
+     mHandle = dlopen(filename.c_str(), RTLD_NOW);
+ 
+@@ -124,6 +129,10 @@ bool DynamicLib::OpenLoaded(const std::string& filename, std::string* error) {
+         *error = "DynamicLib.OpenLoaded: " + filename +
+                  " Windows Error: " + std::to_string(GetLastError());
+     }
++#elif DAWN_PLATFORM_IS(HORIZON)
++    if (error != nullptr) {
++        *error = "Dynamic libraries are not supported on Horizon";
++    }
+ #elif DAWN_PLATFORM_IS(POSIX)
+     mHandle = dlopen(filename.c_str(), RTLD_NOW | RTLD_NOLOAD);
+ 
+@@ -165,6 +174,7 @@ void DynamicLib::Close() {
+         // In ASAN builds, we have to leak the DLL instead in case it gets loaded again later.
+         FreeLibrary(static_cast<HMODULE>(mHandle));
+ #endif
++#elif DAWN_PLATFORM_IS(HORIZON)
+ #elif DAWN_PLATFORM_IS(POSIX)
+         dlclose(mHandle);
+ #else
+@@ -185,6 +195,10 @@ void* DynamicLib::GetProc(const std::string& procName, std::string* error) const
+     if (proc == nullptr && error != nullptr) {
+         *error = "Windows Error: " + std::to_string(GetLastError());
+     }
++#elif DAWN_PLATFORM_IS(HORIZON)
++    if (error != nullptr) {
++        *error = "Dynamic libraries are not supported on Horizon";
++    }
+ #elif DAWN_PLATFORM_IS(POSIX)
+     proc = reinterpret_cast<void*>(dlsym(mHandle, procName.c_str()));
+ 
+diff --git a/src/dawn/common/SystemUtils.cpp b/src/dawn/common/SystemUtils.cpp
+index f46169ca0..3ef4bf2ef 100644
+--- a/src/dawn/common/SystemUtils.cpp
++++ b/src/dawn/common/SystemUtils.cpp
+@@ -47,6 +47,8 @@
+ #include <mach-o/dyld.h>
+ 
+ #include <vector>
++#elif DAWN_PLATFORM_IS(HORIZON)
++#include <cstdlib>
+ #endif
+ 
+ #include <array>
+@@ -86,6 +88,20 @@ std::pair<std::string, bool> GetEnvironmentVar(const char* variableName) {
+ bool SetEnvironmentVar(const char* variableName, const char* value) {
+     return SetEnvironmentVariableA(variableName, value) == TRUE;
+ }
++#elif DAWN_PLATFORM_IS(HORIZON)
++const char* GetPathSeparator() {
++    return "/";
++}
++
++std::pair<std::string, bool> GetEnvironmentVar(const char* variableName) {
++    char* value = getenv(variableName);
++    return value == nullptr ? std::make_pair(std::string(), false)
++                            : std::make_pair(std::string(value), true);
++}
++
++bool SetEnvironmentVar(const char*, const char*) {
++    return false;
++}
+ #elif DAWN_PLATFORM_IS(POSIX)
+ const char* GetPathSeparator() {
+     return "/";
+@@ -144,6 +160,10 @@ std::optional<std::string> GetExecutablePath() {
+     buffer[size] = '\0';
+     return buffer.data();
+ }
++#elif DAWN_PLATFORM_IS(HORIZON)
++std::optional<std::string> GetExecutablePath() {
++    return {};
++}
+ #elif DAWN_PLATFORM_IS(FUCHSIA)
+ std::optional<std::string> GetExecutablePath() {
+     // UNIMPLEMENTED
+@@ -199,6 +219,10 @@ std::optional<std::string> GetModulePath() {
+     return GetHModulePath(module);
+ #endif
+ }
++#elif DAWN_PLATFORM_IS(HORIZON)
++std::optional<std::string> GetModulePath() {
++    return {};
++}
+ #elif DAWN_PLATFORM_IS(FUCHSIA)
+ std::optional<std::string> GetModulePath() {
+     return {};
+diff --git a/src/dawn/common/ThreadLocal.cpp b/src/dawn/common/ThreadLocal.cpp
+index 7325be082..65fd27dcd 100644
+--- a/src/dawn/common/ThreadLocal.cpp
++++ b/src/dawn/common/ThreadLocal.cpp
+@@ -32,6 +32,12 @@
+ #include "absl/base/no_destructor.h"
+ #include "absl/container/flat_hash_set.h"
+ #include "src/dawn/common/MutexProtected.h"
++#include "src/utils/assert.h"
++#include "src/utils/platform.h"
++
++#if DAWN_PLATFORM_IS(HORIZON)
++#include <pthread.h>
++#endif
+ 
+ namespace dawn {
+ namespace {
+@@ -44,6 +50,30 @@ auto& GetAliveThreads() {
+     static absl::NoDestructor<MutexProtected<absl::flat_hash_set<ThreadUniqueId>>> sThreadUniqueIds;
+     return *sThreadUniqueIds;
+ }
++
++struct ThreadRef {
++    ThreadUniqueId mThreadUniqueId;
++
++    explicit ThreadRef(ThreadUniqueId id) : mThreadUniqueId(id) {
++        GetAliveThreads()->insert(mThreadUniqueId);
++    }
++    ~ThreadRef() { GetAliveThreads()->erase(mThreadUniqueId); }
++};
++
++#if DAWN_PLATFORM_IS(HORIZON)
++// Horizon does not expose compiler TLS through TPIDR_EL0. libnx pthread keys
++// retain the per-thread lifetime behavior Dawn needs without compiler TLS.
++pthread_key_t sThreadRefKey;
++pthread_once_t sThreadRefKeyOnce = PTHREAD_ONCE_INIT;
++
++void DestroyThreadRef(void* value) {
++    delete static_cast<ThreadRef*>(value);
++}
++
++void InitializeThreadRefKey() {
++    DAWN_CHECK(pthread_key_create(&sThreadRefKey, DestroyThreadRef) == 0);
++}
++#endif
+ }  // anonymous namespace
+ 
+ ThreadUniqueId GetThreadUniqueId() {
+@@ -54,18 +84,20 @@ ThreadUniqueId GetThreadUniqueId() {
+     // ThreadUniqueId from a globally static set of "running" ThreadUniqueIds. This allows us to
+     // check whether a ThreadUniqueId is still running since thread_local variables are destroyed
+     // when a thread is terminated.
+-    struct ThreadRef {
+-        ThreadUniqueId mThreadUniqueId;
+-
+-        explicit ThreadRef(ThreadUniqueId ThreadUniqueId) : mThreadUniqueId(ThreadUniqueId) {
+-            GetAliveThreads()->insert(mThreadUniqueId);
+-        }
+-        ~ThreadRef() { GetAliveThreads()->erase(mThreadUniqueId); }
+-    };
+     // This ThreadRef is initialized the first time GetThreadUniqueId is called for each thread (see
+     // https://stackoverflow.com/a/49821006), and destroyed when the thread terminates.
++#if DAWN_PLATFORM_IS(HORIZON)
++    DAWN_CHECK(pthread_once(&sThreadRefKeyOnce, InitializeThreadRefKey) == 0);
++    auto* threadRef = static_cast<ThreadRef*>(pthread_getspecific(sThreadRefKey));
++    if (threadRef == nullptr) {
++        threadRef = new ThreadRef(sNextThreadUniqueId++);
++        DAWN_CHECK(pthread_setspecific(sThreadRefKey, threadRef) == 0);
++    }
++    return threadRef->mThreadUniqueId;
++#else
+     static thread_local ThreadRef sThreadRef(sNextThreadUniqueId++);
+     return sThreadRef.mThreadUniqueId;
++#endif
+ }
+ 
+ bool IsThreadAlive(ThreadUniqueId ThreadUniqueId) {
+diff --git a/src/dawn/native/Surface.cpp b/src/dawn/native/Surface.cpp
+index f58139dbe..f180da131 100644
+--- a/src/dawn/native/Surface.cpp
++++ b/src/dawn/native/Surface.cpp
+@@ -118,14 +118,14 @@ ResultOrError<UnpackedPtr<SurfaceDescriptor>> ValidateSurfaceDescriptor(
+                   Branch<SurfaceDescriptorFromWindowsWinUISwapChainPanel>,
+                   Branch<SurfaceSourceXlibWindow>, Branch<SurfaceSourceWaylandSurface>>()));
+     switch (type) {
+-#if DAWN_PLATFORM_IS(ANDROID)
++#if DAWN_PLATFORM_IS(ANDROID) || DAWN_PLATFORM_IS(HORIZON)
+         case wgpu::SType::SurfaceSourceAndroidNativeWindow: {
+             auto* subDesc = descriptor.Get<SurfaceSourceAndroidNativeWindow>();
+             DAWN_ASSERT(subDesc != nullptr);
+             DAWN_INVALID_IF(subDesc->window == nullptr, "Android window is not set.");
+             return descriptor;
+         }
+-#endif  // DAWN_PLATFORM_IS(ANDROID)
++#endif  // DAWN_PLATFORM_IS(ANDROID) || DAWN_PLATFORM_IS(HORIZON)
+ #if defined(DAWN_ENABLE_BACKEND_METAL)
+         case wgpu::SType::SurfaceSourceMetalLayer: {
+             auto* subDesc = descriptor.Get<SurfaceSourceMetalLayer>();
+diff --git a/src/dawn/native/opengl/BackendGL.cpp b/src/dawn/native/opengl/BackendGL.cpp
+index e6dd0cec9..1e8025593 100644
+--- a/src/dawn/native/opengl/BackendGL.cpp
++++ b/src/dawn/native/opengl/BackendGL.cpp
+@@ -91,6 +91,7 @@ std::vector<Ref<PhysicalDeviceBase>> Backend::DiscoverPhysicalDevices(
+         Ref<DisplayEGL> display;
+         DAWN_TRY_ASSIGN(display, std::move(maybeDisplay));
+ 
++#if !DAWN_PLATFORM_IS(HORIZON)
+         if (!display->egl->HasExt(EGLExt::CreateContextRobustness)) {
+             return DAWN_VALIDATION_ERROR("EGL_EXT_create_context_robustness is required.");
+         }
+@@ -99,6 +100,7 @@ std::vector<Ref<PhysicalDeviceBase>> Backend::DiscoverPhysicalDevices(
+             return DAWN_INTERNAL_ERROR(
+                 "EGL_KHR_fence_sync or EGL_KHR_reusable_sync must be supported");
+         }
++#endif
+ 
+         Ref<PhysicalDevice> device;
+         DAWN_TRY_ASSIGN(
+diff --git a/src/dawn/native/opengl/ContextEGL.cpp b/src/dawn/native/opengl/ContextEGL.cpp
+index 5e9412349..17e7ac635 100644
+--- a/src/dawn/native/opengl/ContextEGL.cpp
++++ b/src/dawn/native/opengl/ContextEGL.cpp
+@@ -34,6 +34,12 @@
+ 
+ #include "src/dawn/native/opengl/DisplayEGL.h"
+ #include "src/dawn/native/opengl/UtilsEGL.h"
++#include "src/utils/assert.h"
++#include "src/utils/platform.h"
++
++#if DAWN_PLATFORM_IS(HORIZON)
++#include <pthread.h>
++#endif
+ 
+ #ifndef EGL_DISPLAY_TEXTURE_SHARE_GROUP_ANGLE
+ #define EGL_DISPLAY_TEXTURE_SHARE_GROUP_ANGLE 0x33AF
+@@ -63,8 +69,39 @@ namespace dawn::native::opengl {
+ 
+ namespace {
+ 
++#if DAWN_PLATFORM_IS(HORIZON)
++// Horizon does not expose compiler TLS through TPIDR_EL0. Keep the current
++// scoped EGL context in libnx pthread-key storage instead.
++pthread_key_t gCurrentContextInScopeKey;
++pthread_once_t gCurrentContextInScopeKeyOnce = PTHREAD_ONCE_INIT;
++
++void InitializeCurrentContextInScopeKey() {
++    DAWN_CHECK(pthread_key_create(&gCurrentContextInScopeKey, nullptr) == 0);
++}
++
++ContextEGL* GetCurrentContextInScope() {
++    DAWN_CHECK(pthread_once(&gCurrentContextInScopeKeyOnce, InitializeCurrentContextInScopeKey) ==
++               0);
++    return static_cast<ContextEGL*>(pthread_getspecific(gCurrentContextInScopeKey));
++}
++
++void SetCurrentContextInScope(ContextEGL* context) {
++    DAWN_CHECK(pthread_once(&gCurrentContextInScopeKeyOnce, InitializeCurrentContextInScopeKey) ==
++               0);
++    DAWN_CHECK(pthread_setspecific(gCurrentContextInScopeKey, context) == 0);
++}
++#else
+ thread_local ContextEGL* gCurrentContextInScope = nullptr;
+ 
++ContextEGL* GetCurrentContextInScope() {
++    return gCurrentContextInScope;
++}
++
++void SetCurrentContextInScope(ContextEGL* context) {
++    gCurrentContextInScope = context;
++}
++#endif
++
+ MaybeError MakeContextCurrent(DisplayEGL* display, const ContextEGL::ContextState& state) {
+     if (display->egl->GetCurrentContext() != state.context ||
+         display->egl->GetCurrentSurface(EGL_DRAW) != state.drawSurface ||
+@@ -268,7 +305,7 @@ bool ContextEGL::IsInScopedMakeCurrent() const {
+     // but that is not possible until all legacy call sites are updated to use
+     // `ScopedMakeCurrent` instead of `DeprecatedMakeCurrent`. This thread-local tracks if the
+     // context was made current via a scope and can be removed after the refactor.
+-    return gCurrentContextInScope == this;
++    return GetCurrentContextInScope() == this;
+ }
+ 
+ bool ContextEGL::IsNotCurrentOnAnotherThread() const {
+@@ -368,7 +405,7 @@ MaybeError ContextEGL::ScopedMakeCurrent::Initialize() {
+     mContext->mCurrentThread = std::this_thread::get_id();
+ #endif
+ 
+-    gCurrentContextInScope = mContext;
++    SetCurrentContextInScope(mContext);
+     return {};
+ }
+ 
+@@ -386,7 +423,7 @@ MaybeError ContextEGL::ScopedMakeCurrent::End() {
+         mContext->mCurrentThread = {};
+ #endif
+     }
+-    gCurrentContextInScope = nullptr;
++    SetCurrentContextInScope(nullptr);
+     mContext = nullptr;
+     return result;
+ }
+diff --git a/src/dawn/native/opengl/PhysicalDeviceGL.cpp b/src/dawn/native/opengl/PhysicalDeviceGL.cpp
+index 1f66c9fa1..b5a29f7f5 100644
+--- a/src/dawn/native/opengl/PhysicalDeviceGL.cpp
++++ b/src/dawn/native/opengl/PhysicalDeviceGL.cpp
+@@ -534,6 +534,12 @@ ResultOrError<Ref<DeviceBase>> PhysicalDevice::CreateDeviceImpl(
+     }
+ 
+     bool useRobustness = !deviceToggles.IsEnabled(Toggle::DisableRobustness);
++#if DAWN_PLATFORM_IS(HORIZON)
++    // Mesa's Horizon EGL implementation does not expose robust context
++    // creation. Keep Dawn/Tint's shader bounds instrumentation enabled, but
++    // create the driver context without EGL robustness attributes.
++    useRobustness = false;
++#endif
+ 
+     // Workaround: Imagination EGL 1.5 drivers do not support the new robustness enum.
+     // Use the pre-1.5 extension enum instead.
+diff --git a/src/dawn/native/opengl/QueueGL.cpp b/src/dawn/native/opengl/QueueGL.cpp
+index c44670eb0..4192e314f 100644
+--- a/src/dawn/native/opengl/QueueGL.cpp
++++ b/src/dawn/native/opengl/QueueGL.cpp
+@@ -73,7 +73,13 @@ Queue::Queue(Device* device, const QueueDescriptor* descriptor) : QueueBase(devi
+     } else if (egl.HasExt(EGLExt::ReusableSync)) {
+         mEGLSyncType = EGL_SYNC_REUSABLE_KHR;
+     } else {
++#if DAWN_PLATFORM_IS(HORIZON)
++        // Horizon's EGL implementation has no sync-object extension. Queue
++        // completion falls back to glFinish in the methods below.
++        mEGLSyncType = 0;
++#else
+         DAWN_UNREACHABLE();
++#endif
+     }
+ }
+ 
+@@ -189,6 +195,16 @@ void Queue::SetNeedsFenceSync() {
+ ResultOrError<ExecutionSerial> Queue::WaitForQueueSerialImpl(ExecutionSerial waitSerial,
+                                                              Nanoseconds timeout) {
+     Device* device = ToBackend(GetDevice());
++#if DAWN_PLATFORM_IS(HORIZON)
++    if (mEGLSyncType == 0) {
++        return device->ExecuteGL(
++            SubmitMode::Passive,
++            [&](const OpenGLFunctions& gl) -> ResultOrError<ExecutionSerial> {
++                DAWN_GL_TRY(gl, Finish());
++                return GetLastSubmittedCommandSerial();
++            });
++    }
++#endif
+     // This function is called after all dependent GL commands have been flushed in
+     // Queue::SubmitImpl(), it's safe to use ExecuteGL().
+     return device->ExecuteGL(SubmitMode::Passive, [&](const OpenGLFunctions& gl) -> auto {
+@@ -229,6 +245,19 @@ MaybeError Queue::SubmitFenceSync() {
+         return {};
+     }
+     Device* device = ToBackend(GetDevice());
++#if DAWN_PLATFORM_IS(HORIZON)
++    if (mEGLSyncType == 0) {
++        return device->EnqueueAndFlushGL(
++            SubmitMode::Passive, [&](const OpenGLFunctions& gl) -> MaybeError {
++                // This serializes CPU and GPU work, but preserves Dawn's queue
++                // completion contract on EGL implementations without sync objects.
++                DAWN_GL_TRY(gl, Finish());
++                IncrementLastSubmittedCommandSerial();
++                mHasPendingUnsignaledCommands = false;
++                return {};
++            });
++    }
++#endif
+     return device->EnqueueAndFlushGL(
+         SubmitMode::Passive, [&](const OpenGLFunctions& gl) -> MaybeError {
+             Ref<WrappedEGLSync> sync;
+@@ -251,6 +280,12 @@ MaybeError Queue::SubmitFenceSync() {
+ 
+ ResultOrError<Ref<SharedFence>> Queue::GetOrCreateSharedFence(ExecutionSerial lastUsageSerial,
+                                                               wgpu::SharedFenceType type) {
++#if DAWN_PLATFORM_IS(HORIZON)
++    if (mEGLSyncType == 0) {
++        return DAWN_UNIMPLEMENTED_ERROR(
++            "Shared fences require an EGL sync-object extension on Horizon");
++    }
++#endif
+     Ref<WrappedEGLSync> sync;
+ 
+     EGLenum requestedSyncType = EGLSyncTypeFromSharedFenceType(type);
+@@ -309,6 +344,13 @@ MaybeError Queue::SubmitPendingCommandsImpl() {
+ }
+ 
+ ResultOrError<ExecutionSerial> Queue::CheckAndUpdateCompletedSerials() {
++#if DAWN_PLATFORM_IS(HORIZON)
++    if (mEGLSyncType == 0) {
++        // SubmitFenceSync calls glFinish before advancing the submitted serial,
++        // so every submitted serial is complete in fallback mode.
++        return GetLastSubmittedCommandSerial();
++    }
++#endif
+     // TODO(crbug.com/40643114): Revisit whether this lock is needed for this backend.
+     auto deviceGuard = GetDevice()->GetGuard();
+ 
+diff --git a/src/dawn/native/opengl/QueueGL.h b/src/dawn/native/opengl/QueueGL.h
+index ea9edafe3..c5422b928 100644
+--- a/src/dawn/native/opengl/QueueGL.h
++++ b/src/dawn/native/opengl/QueueGL.h
+@@ -73,7 +73,9 @@ class Queue final : public QueueBase {
+     void ForceEventualFlushOfCommands() override;
+     MaybeError WaitForIdleForDestructionImpl() override;
+ 
+-    uint32_t mEGLSyncType;
++    // Zero selects the Horizon glFinish completion fallback when EGL exposes
++    // neither fence-sync nor reusable-sync objects.
++    uint32_t mEGLSyncType = 0;
+     MutexProtected<std::deque<std::pair<Ref<WrappedEGLSync>, ExecutionSerial>>> mFencesInFlight;
+ 
+     // Has pending GL commands which are not associated with a fence.
+diff --git a/src/dawn/native/opengl/SwapChainEGL.cpp b/src/dawn/native/opengl/SwapChainEGL.cpp
+index 15ebd666b..a9c581483 100644
+--- a/src/dawn/native/opengl/SwapChainEGL.cpp
++++ b/src/dawn/native/opengl/SwapChainEGL.cpp
+@@ -114,21 +114,36 @@ MaybeError SwapChainEGL::PresentImpl() {
+ 
+         const OpenGLFunctions& gl = device->GetGL();
+ 
++#if DAWN_PLATFORM_IS(HORIZON)
++        surfaceWidth = static_cast<EGLint>(mTexture->GetWidth(Aspect::Color));
++        surfaceHeight = static_cast<EGLint>(mTexture->GetHeight(Aspect::Color));
++#endif
++
+         GLuint readFbo = 0;
+         DAWN_GL_TRY(gl, GenFramebuffers(1, &readFbo));
+         DAWN_GL_TRY(gl, BindFramebuffer(GL_READ_FRAMEBUFFER, readFbo));
+         DAWN_TRY(mTextureView->BindToFramebuffer(gl, GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0));
+ 
+         DAWN_GL_TRY(gl, BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0));
++#if DAWN_PLATFORM_IS(HORIZON)
++        DAWN_GL_TRY(gl, Disable(GL_SCISSOR_TEST));
++#else
+         DAWN_GL_TRY(gl, Scissor(0, 0, surfaceWidth, surfaceHeight));
++#endif
+         DAWN_GL_TRY(gl, BlitFramebuffer(0, 0, mTexture->GetWidth(Aspect::Color),
+                                         mTexture->GetHeight(Aspect::Color), 0, surfaceHeight,
+-                                        surfaceWidth, 0, GL_COLOR_BUFFER_BIT, GL_LINEAR));
++                                        surfaceWidth, 0, GL_COLOR_BUFFER_BIT,
++#if DAWN_PLATFORM_IS(HORIZON)
++                                        GL_NEAREST));
++        DAWN_GL_TRY(gl, Enable(GL_SCISSOR_TEST));
++#else
++                                        GL_LINEAR));
++#endif
+ 
+         DAWN_GL_TRY(gl, DeleteFramebuffers(1, &readFbo));
+     }
+ 
+-    egl.SwapBuffers(display, mEGLSurface);
++    DAWN_TRY(CheckEGL(egl, egl.SwapBuffers(display, mEGLSurface), "presenting surface"));
+ 
+     mTexture->APIDestroy();
+     mTexture = nullptr;
+@@ -206,6 +221,14 @@ MaybeError SwapChainEGL::CreateEGLSurface(const DisplayEGL* display) {
+                     static_cast<ANativeWindow*>(surface->GetAndroidNativeWindow()), attribs.data());
+                 return {};
+ #endif  // DAWN_PLATFORM_IS(ANDROID)
++#if DAWN_PLATFORM_IS(HORIZON)
++            case Surface::Type::AndroidWindow:
++                mEGLSurface = egl.CreateWindowSurface(
++                    eglDisplay, config,
++                    reinterpret_cast<EGLNativeWindowType>(surface->GetAndroidNativeWindow()),
++                    attribs.data());
++                return {};
++#endif  // DAWN_PLATFORM_IS(HORIZON)
+ #if defined(DAWN_ENABLE_BACKEND_METAL)
+             case Surface::Type::MetalLayer:
+                 mEGLSurface = egl.CreateWindowSurface(eglDisplay, config, surface->GetMetalLayer(),
+diff --git a/src/dawn/native/utils/WGPUHelpers.cpp b/src/dawn/native/utils/WGPUHelpers.cpp
+index 940f9d427..810a3b3d0 100644
+--- a/src/dawn/native/utils/WGPUHelpers.cpp
++++ b/src/dawn/native/utils/WGPUHelpers.cpp
+@@ -232,7 +232,11 @@ std::string_view NormalizeMessageString(StringView in) {
+     if (in.IsUndefined()) {
+         return {};
+     }
+-    return std::string_view(in.data, DAWN_UNSAFE_TODO(strnlen(in.data, in.length)));
++    size_t length = 0;
++    while (length < in.length && in.data[length] != '\0') {
++        ++length;
++    }
++    return std::string_view(in.data, length);
+ }
+ 
+ }  // namespace dawn::native::utils
+diff --git a/src/dawn/utils/SystemUtils.cpp b/src/dawn/utils/SystemUtils.cpp
+index 33a7bab5b..0338730be 100644
+--- a/src/dawn/utils/SystemUtils.cpp
++++ b/src/dawn/utils/SystemUtils.cpp
+@@ -31,6 +31,8 @@
+ 
+ #if DAWN_PLATFORM_IS(WINDOWS)
+ #include "src/utils/windows_with_undefs.h"
++#elif DAWN_PLATFORM_IS(HORIZON)
++#include <switch.h>
+ #elif DAWN_PLATFORM_IS(POSIX)
+ #include <unistd.h>
+ #else
+@@ -43,6 +45,10 @@ namespace dawn::utils {
+ void USleep(unsigned int usecs) {
+     Sleep(static_cast<DWORD>(usecs / 1000));
+ }
++#elif DAWN_PLATFORM_IS(HORIZON)
++void USleep(unsigned int usecs) {
++    svcSleepThread(static_cast<int64_t>(usecs) * 1000);
++}
+ #elif DAWN_PLATFORM_IS(POSIX)
+ void USleep(unsigned int usecs) {
+     usleep(usecs);
+diff --git a/src/tint/utils/text_generator/text_generator.cc b/src/tint/utils/text_generator/text_generator.cc
+index a2a616305..7b378c65c 100644
+--- a/src/tint/utils/text_generator/text_generator.cc
++++ b/src/tint/utils/text_generator/text_generator.cc
+@@ -116,7 +116,10 @@ std::string TextGenerator::TextBuffer::String(uint32_t indent /* = 0 */) const {
+ 
+ std::string TextGenerator::TextBuffer::MinifiedString() const {
+     /// Returns `true` if @p c is the start of an identifier codepoint.
+-    auto is_ident_char = [](char c) { return std::isalnum(c) || c == '_' || !isascii(c); };
++    auto is_ident_char = [](char c) {
++        return std::isalnum(static_cast<unsigned char>(c)) || c == '_' ||
++               static_cast<unsigned char>(c) > 0x7f;
++    };
+ 
+     bool previous_is_ident = false;
+     bool in_whitespace = false;
+diff --git a/src/utils/platform.h b/src/utils/platform.h
+index 4dd58a487..065f03914 100644
+--- a/src/utils/platform.h
++++ b/src/utils/platform.h
+@@ -60,6 +60,10 @@
+ #error "Unsupported Windows platform."
+ #endif
+ 
++#elif defined(__SWITCH__)
++#define DAWN_PLATFORM_IS_HORIZON 1
++#define DAWN_PLATFORM_IS_POSIX 1
++
+ #elif defined(__linux__)
+ #define DAWN_PLATFORM_IS_LINUX 1
+ #define DAWN_PLATFORM_IS_POSIX 1
+@@ -212,6 +216,10 @@ static_assert(sizeof(sizeof(char)) == 4, "Expect sizeof(size_t) == 4");
+ #define DAWN_PLATFORM_IS_POSIX 0
+ #endif
+ 
++#if !defined(DAWN_PLATFORM_IS_HORIZON)
++#define DAWN_PLATFORM_IS_HORIZON 0
++#endif
++
+ #if !defined(DAWN_PLATFORM_IS_LINUX)
+ #define DAWN_PLATFORM_IS_LINUX 0
+ #endif

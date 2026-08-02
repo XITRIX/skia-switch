@@ -9,7 +9,7 @@
 #define SkFeatures_DEFINED
 
 #if !defined(SK_BUILD_FOR_ANDROID) && !defined(SK_BUILD_FOR_IOS) && !defined(SK_BUILD_FOR_WIN) && \
-    !defined(SK_BUILD_FOR_UNIX) && !defined(SK_BUILD_FOR_MAC)
+    !defined(SK_BUILD_FOR_UNIX) && !defined(SK_BUILD_FOR_MAC) && !defined(SK_BUILD_FOR_HORIZON)
 
     #ifdef __APPLE__
         #include <TargetConditionals.h>
@@ -23,6 +23,8 @@
         // WASM toolchains expose a Unix-like compilation environment, but it is
         // not Unix (e.g. posix signals are not supported).
         #define SK_BUILD_FOR_WASM
+    #elif defined(__SWITCH__)
+        #define SK_BUILD_FOR_HORIZON
     #elif defined(linux) || defined(__linux) || defined(__FreeBSD__) || \
           defined(__OpenBSD__) || defined(__sun) || defined(__NetBSD__) || \
           defined(__DragonFly__) || defined(__Fuchsia__) || \
@@ -34,6 +36,12 @@
         #define SK_BUILD_FOR_MAC
     #endif
 #endif // end SK_BUILD_FOR_*
+
+#if defined(SK_BUILD_FOR_HORIZON)
+    #define SK_THREAD_LOCAL
+#else
+    #define SK_THREAD_LOCAL thread_local
+#endif
 
 
 #if defined(SK_BUILD_FOR_WIN) && !defined(__clang__)

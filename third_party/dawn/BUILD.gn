@@ -10,7 +10,14 @@
 import("//gn/skia.gni")
 import("//third_party/dawn/args.gni")
 
-if (is_win) {
+if (is_horizon) {
+  _cc = "$devkitpro/devkitA64/bin/aarch64-none-elf-gcc"
+  _cxx = "$devkitpro/devkitA64/bin/aarch64-none-elf-g++"
+  _ar = "$devkitpro/devkitA64/bin/aarch64-none-elf-ar"
+  _dawn_lib_name = "libdawn_combined.a"
+  _tint_lib_name = "libtint_combined.a"
+} else if (is_win) {
+  _ar = "ar"
   # On Windows, the normal cc/cxx variables are just "clang" and "clang++"
   # which are not found in the path. CMake needs the full path.
   if (is_clang) {
@@ -27,6 +34,7 @@ if (is_win) {
 } else {
   _cc = cc
   _cxx = cxx
+  _ar = "ar"
   _dawn_lib_name = "libdawn_combined.a"
   _tint_lib_name = "libtint_combined.a"
 }
@@ -78,6 +86,7 @@ action("tint_cmake") {
   args = [
     "--cc=" + _cc,
     "--cxx=" + _cxx,
+    "--ar=" + _ar,
     "--output_path=" + rebase_path(outputs[0], root_build_dir),
     "--depfile_path=" + rebase_path(depfile, root_build_dir),
     "--target_os=" + host_os,
@@ -215,8 +224,10 @@ action("dawn_cmake") {
   script = "build_dawn.py"
 
   sources = [
+    "abseil-horizon.patch",
     "build_dawn.py",
     "cmake_utils.py",
+    "horizon.patch",
   ]
 
   outputs = [ "$root_out_dir/${_dawn_lib_name}" ]
@@ -226,6 +237,7 @@ action("dawn_cmake") {
   args = [
     "--cc=" + _cc,
     "--cxx=" + _cxx,
+    "--ar=" + _ar,
     "--output_path=" + rebase_path(outputs[0], root_build_dir),
     "--depfile_path=" + rebase_path(depfile, root_build_dir),
     "--gen_dir=" + rebase_path(target_gen_dir, root_build_dir),
@@ -305,7 +317,7 @@ config("dawn_defines") {
   if (dawn_enable_vulkan && (is_win || is_android || is_linux)) {
     defines += [ "SK_DAWN_HAS_VULKAN" ]
   }
-  if (dawn_enable_opengles && (is_android || is_linux)) {
+  if (dawn_enable_opengles && (is_android || is_linux || is_horizon)) {
     defines += [ "SK_DAWN_HAS_OPENGLES" ]
   }
   if (dawn_enable_metal && (is_mac || is_ios)) {

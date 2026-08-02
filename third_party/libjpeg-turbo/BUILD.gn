@@ -6,7 +6,7 @@
 import("../../gn/skia.gni")
 
 declare_args() {
-  skia_use_system_libjpeg_turbo = is_official_build && !is_canvaskit
+  skia_use_system_libjpeg_turbo = (is_official_build || is_horizon) && !is_canvaskit
 }
 
 import("../third_party.gni")

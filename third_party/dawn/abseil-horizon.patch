@@ -1,0 +1,234 @@
+diff --git a/absl/base/config.h b/absl/base/config.h
+index 4a35ff1..8b55244 100644
+--- a/absl/base/config.h
++++ b/absl/base/config.h
+@@ -235,7 +235,8 @@ static_assert(ABSL_INTERNAL_INLINE_NAMESPACE_STR[0] != 'h' ||
+ // compiled against libstdc++ with _GLIBCXX_HAVE_TLS defined.
+ #ifdef ABSL_HAVE_TLS
+ #error ABSL_HAVE_TLS cannot be directly set
+-#elif (defined(__linux__)) && (defined(__clang__) || defined(_GLIBCXX_HAVE_TLS))
++#elif defined(__linux__) && !defined(__SWITCH__) && \
++    (defined(__clang__) || defined(_GLIBCXX_HAVE_TLS))
+ #define ABSL_HAVE_TLS 1
+ #elif defined(__INTEL_LLVM_COMPILER)
+ #define ABSL_HAVE_TLS 1
+@@ -281,7 +282,7 @@ static_assert(ABSL_INTERNAL_INLINE_NAMESPACE_STR[0] != 'h' ||
+ // Checks whether the `thread_local` storage duration specifier is supported.
+ #ifdef ABSL_HAVE_THREAD_LOCAL
+ #error ABSL_HAVE_THREAD_LOCAL cannot be directly set
+-#elif !defined(__XTENSA__)
++#elif !defined(__XTENSA__) && !defined(__SWITCH__)
+ #define ABSL_HAVE_THREAD_LOCAL 1
+ #endif
+ 
+diff --git a/absl/base/internal/low_level_alloc.cc b/absl/base/internal/low_level_alloc.cc
+index 3887a92..fe87d37 100644
+--- a/absl/base/internal/low_level_alloc.cc
++++ b/absl/base/internal/low_level_alloc.cc
+@@ -21,6 +21,10 @@
+ 
+ #include <stdint.h>
+ 
++#include <atomic>
++#include <cstddef>
++#include <cstdlib>
++#include <new>
+ #include <optional>
+ #include <type_traits>
+ 
+@@ -34,7 +38,109 @@
+ // LowLevelAlloc requires that the platform support low-level
+ // allocation of virtual memory. Platforms lacking this cannot use
+ // LowLevelAlloc.
+-#ifndef ABSL_LOW_LEVEL_ALLOC_MISSING
++#if defined(__SWITCH__)
++
++namespace absl {
++ABSL_NAMESPACE_BEGIN
++namespace base_internal {
++
++// Horizon has no mmap API. Dawn still needs Abseil's thread identities, so use
++// the platform's thread-safe heap for the small amount of low-level storage
++// those identities require.
++struct LowLevelAlloc::Arena {
++  explicit Arena(bool is_permanent = false)
++      : allocation_count(0), permanent(is_permanent) {}
++
++  std::atomic<size_t> allocation_count;
++  const bool permanent;
++};
++
++namespace {
++
++struct alignas(std::max_align_t) AllocationHeader {
++  LowLevelAlloc::Arena* arena;
++};
++
++LowLevelAlloc::Arena g_default_arena(true);
++std::atomic<LowLevelAlloc::Arena*> g_sig_safe_arena(nullptr);
++
++}  // namespace
++
++LowLevelAlloc::Arena* LowLevelAlloc::DefaultArena() {
++  return &g_default_arena;
++}
++
++void* LowLevelAlloc::Alloc(size_t request) {
++  return AllocWithArena(request, DefaultArena());
++}
++
++void* LowLevelAlloc::AllocWithArena(size_t request, Arena* arena) {
++  if (request == 0) {
++    return nullptr;
++  }
++  if (arena == nullptr) {
++    std::abort();
++  }
++
++  auto* allocation = static_cast<AllocationHeader*>(
++      std::malloc(sizeof(AllocationHeader) + request));
++  if (allocation == nullptr) {
++    std::abort();
++  }
++  allocation->arena = arena;
++  arena->allocation_count.fetch_add(1, std::memory_order_relaxed);
++  return allocation + 1;
++}
++
++void LowLevelAlloc::Free(void* memory) {
++  if (memory == nullptr) {
++    return;
++  }
++  auto* allocation = static_cast<AllocationHeader*>(memory) - 1;
++  allocation->arena->allocation_count.fetch_sub(1, std::memory_order_relaxed);
++  std::free(allocation);
++}
++
++LowLevelAlloc::Arena* LowLevelAlloc::NewArena(uint32_t) {
++  void* storage = std::malloc(sizeof(Arena));
++  if (storage == nullptr) {
++    std::abort();
++  }
++  return new (storage) Arena();
++}
++
++bool LowLevelAlloc::DeleteArena(Arena* arena) {
++  if (arena == nullptr || arena->permanent ||
++      arena->allocation_count.load(std::memory_order_relaxed) != 0) {
++    return false;
++  }
++  arena->~Arena();
++  std::free(arena);
++  return true;
++}
++
++LowLevelAlloc::Arena* SigSafeArena() {
++  return g_sig_safe_arena.load(std::memory_order_acquire);
++}
++
++void InitSigSafeArena() {
++  if (SigSafeArena() != nullptr) {
++    return;
++  }
++  LowLevelAlloc::Arena* new_arena = LowLevelAlloc::NewArena(0);
++  LowLevelAlloc::Arena* expected = nullptr;
++  if (!g_sig_safe_arena.compare_exchange_strong(
++          expected, new_arena, std::memory_order_release,
++          std::memory_order_relaxed)) {
++    LowLevelAlloc::DeleteArena(new_arena);
++  }
++}
++
++}  // namespace base_internal
++ABSL_NAMESPACE_END
++}  // namespace absl
++
++#elif !defined(ABSL_LOW_LEVEL_ALLOC_MISSING)
+ 
+ #ifndef _WIN32
+ #include <pthread.h>
+@@ -664,4 +770,4 @@ void *LowLevelAlloc::AllocWithArena(size_t request, Arena *arena) {
+ ABSL_NAMESPACE_END
+ }  // namespace absl
+ 
+-#endif  // ABSL_LOW_LEVEL_ALLOC_MISSING
++#endif  // defined(__SWITCH__)
+diff --git a/absl/base/internal/low_level_alloc.h b/absl/base/internal/low_level_alloc.h
+index 23218dd..12b74a6 100644
+--- a/absl/base/internal/low_level_alloc.h
++++ b/absl/base/internal/low_level_alloc.h
+@@ -36,7 +36,7 @@
+ // LowLevelAlloc.
+ #ifdef ABSL_LOW_LEVEL_ALLOC_MISSING
+ #error ABSL_LOW_LEVEL_ALLOC_MISSING cannot be directly set
+-#elif !defined(ABSL_HAVE_MMAP) && !defined(_WIN32)
++#elif !defined(ABSL_HAVE_MMAP) && !defined(_WIN32) && !defined(__SWITCH__)
+ #define ABSL_LOW_LEVEL_ALLOC_MISSING 1
+ #endif
+ 
+@@ -47,7 +47,7 @@
+ #ifdef ABSL_LOW_LEVEL_ALLOC_ASYNC_SIGNAL_SAFE_MISSING
+ #error ABSL_LOW_LEVEL_ALLOC_ASYNC_SIGNAL_SAFE_MISSING cannot be directly set
+ #elif defined(_WIN32) || defined(__asmjs__) || defined(__wasm__) || \
+-    defined(__hexagon__)
++    defined(__hexagon__) || defined(__SWITCH__)
+ #define ABSL_LOW_LEVEL_ALLOC_ASYNC_SIGNAL_SAFE_MISSING 1
+ #endif
+ 
+diff --git a/absl/base/internal/sysinfo.cc b/absl/base/internal/sysinfo.cc
+index b103f49..d2dbd08 100644
+--- a/absl/base/internal/sysinfo.cc
++++ b/absl/base/internal/sysinfo.cc
+@@ -439,6 +439,12 @@ pid_t GetTID() {
+   return tid;
+ }
+ 
++#elif defined(__SWITCH__)
++
++pid_t GetTID() {
++  return static_cast<pid_t>(reinterpret_cast<uintptr_t>(pthread_self()));
++}
++
+ #elif defined(__APPLE__)
+ 
+ pid_t GetTID() {
+diff --git a/absl/base/internal/thread_identity.cc b/absl/base/internal/thread_identity.cc
+index 0471a25..6367ec1 100644
+--- a/absl/base/internal/thread_identity.cc
++++ b/absl/base/internal/thread_identity.cc
+@@ -85,7 +85,7 @@ void SetCurrentThreadIdentity(ThreadIdentity* identity,
+                   reclaimer);
+ 
+ #if defined(__wasi__) || defined(__EMSCRIPTEN__) || defined(__MINGW32__) || \
+-    defined(__hexagon__)
++    defined(__hexagon__) || defined(__SWITCH__)
+   // Emscripten, WASI and MinGW pthread implementations does not support
+   // signals. See
+   // https://kripken.github.io/emscripten-site/docs/porting/pthreads.html for
+diff --git a/absl/debugging/internal/elf_mem_image.h b/absl/debugging/internal/elf_mem_image.h
+index c8a1036..21e080c 100644
+--- a/absl/debugging/internal/elf_mem_image.h
++++ b/absl/debugging/internal/elf_mem_image.h
+@@ -35,7 +35,7 @@
+ #if defined(__ELF__) && !defined(__OpenBSD__) && !defined(__QNX__) &&    \
+     !defined(__asmjs__) && !defined(__wasm__) && !defined(__HAIKU__) &&  \
+     !defined(__sun) && !defined(__VXWORKS__) && !defined(__hexagon__) && \
+-    !defined(__XTENSA__)
++    !defined(__XTENSA__) && !defined(__SWITCH__)
+ #define ABSL_HAVE_ELF_MEM_IMAGE 1
+ #endif
+ 
+diff --git a/absl/time/internal/cctz/src/time_zone_libc.cc b/absl/time/internal/cctz/src/time_zone_libc.cc
+index 362da1a..0127c1a 100644
+--- a/absl/time/internal/cctz/src/time_zone_libc.cc
++++ b/absl/time/internal/cctz/src/time_zone_libc.cc
+@@ -60,6 +60,9 @@ auto tm_zone(const std::tm& tm) -> decltype(tzname[0]) {
+   const bool is_dst = tm.tm_isdst > 0;
+   return tzname[is_dst];
+ }
++#elif defined(__SWITCH__)
++long tm_gmtoff(const std::tm&) { return 0; }
++const char* tm_zone(const std::tm&) { return "UTC"; }
+ #elif defined(__native_client__) || defined(__myriad2__) || \
+     defined(__EMSCRIPTEN__)
+ // Uses the globals: '_timezone' and 'tzname'.

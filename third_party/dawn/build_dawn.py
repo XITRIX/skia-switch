@@ -87,6 +87,32 @@ def main():
   dawn_dir = os.path.join(script_dir, "..", "externals", "dawn")
   build_dir = args.build_dir
 
+  if args.target_os == "horizon":
+    def apply_horizon_patch(repo_dir, patch_name):
+      patch_path = os.path.join(script_dir, patch_name)
+      quiet = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+      apply_check = subprocess.run(
+          ["git", "apply", "--check", patch_path],
+          cwd=repo_dir,
+          check=False,
+          **quiet)
+      if apply_check.returncode == 0:
+        subprocess.run(["git", "apply", patch_path], cwd=repo_dir, check=True)
+        return
+      reverse_check = subprocess.run(
+          ["git", "apply", "--reverse", "--check", patch_path],
+          cwd=repo_dir,
+          check=False,
+          **quiet)
+      if reverse_check.returncode != 0:
+        print(f"Error: {patch_name} does not apply to the synced revision.")
+        sys.exit(1)
+
+    apply_horizon_patch(dawn_dir, "horizon.patch")
+    apply_horizon_patch(
+        os.path.join(script_dir, "..", "externals", "abseil-cpp"),
+        "abseil-horizon.patch")
+
   configure_cmd = [
       cmake_exe,
       "-S",
@@ -120,10 +146,21 @@ def main():
   ]
   configure_cmd += get_third_party_locations()
 
+  if args.target_os == "horizon":
+    configure_cmd += [
+        "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY",
+        "-DTINT_BUILD_AS_OTHER_OS=ON",
+        f"-DCMAKE_RANLIB={os.path.join(os.path.dirname(args.ar), 'aarch64-none-elf-ranlib')}",
+        "-DDAWN_FORCE_SYSTEM_COMPONENT_LOAD=OFF",
+        "-DDAWN_USE_WAYLAND=OFF",
+        "-DDAWN_USE_X11=OFF",
+        "-DDAWN_ENABLE_DESKTOP_GL=OFF",
+    ]
+
   if args.enable_rtti:
     configure_cmd.append("-DDAWN_ENABLE_RTTI=ON")
 
-  if target_os == "Linux":
+  if target_os == "Linux" and args.target_os != "horizon":
     configure_cmd.append("-DDAWN_USE_X11=ON")
 
   cxx_flags = args.cxx_flags or []
@@ -149,6 +186,25 @@ def main():
     configure_cmd.append("-DTINT_BUILD_HLSL_WRITER=OFF")
     cxx_flags.append("-w") # Silence warnings
 
+  if args.target_os == "horizon":
+    devkitpro = os.environ.get("DEVKITPRO")
+    if not devkitpro:
+      print("Error: DEVKITPRO must be set for Horizon builds.")
+      sys.exit(1)
+    cxx_flags += [
+        f"-I{devkitpro}/libnx/include",
+        f"-I{devkitpro}/portlibs/switch/include",
+        "-Wno-psabi",
+        "-D__SWITCH__",
+        "-DEGL_NO_PLATFORM_SPECIFIC_TYPES",
+        "-DDAWN_USE_STATIC_ANGLE_EGL",
+    ]
+    ld_flags += [
+        f"-L{devkitpro}/libnx/lib",
+        f"-L{devkitpro}/portlibs/switch/lib",
+        "-specs=nx.specs",
+    ]
+
   if cxx_flags:
     c_cxx_flags_str = " ".join(cxx_flags)
     # -fno-rtti is not a valid C flag.
@@ -170,6 +226,7 @@ def main():
   else:
     configure_cmd.append(f"-DCMAKE_C_COMPILER={args.cc.replace(os.sep, '/')}")
     configure_cmd.append(f"-DCMAKE_CXX_COMPILER={args.cxx.replace(os.sep, '/')}")
+    configure_cmd.append(f"-DCMAKE_AR={args.ar.replace(os.sep, '/')}")
 
   if target_os == "Darwin" or target_os == "iOS":
     configure_cmd.append(f"-DCMAKE_OSX_ARCHITECTURES={target_cpu}")
