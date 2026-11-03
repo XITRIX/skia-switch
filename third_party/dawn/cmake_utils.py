@@ -19,6 +19,7 @@ def add_common_cmake_args(parser):
 
   parser.add_argument("--cc", required=True, help="Path to the C compiler.")
   parser.add_argument("--cxx", required=True, help="Path to the C++ compiler.")
+  parser.add_argument("--ar", default="ar", help="Path to the static archiver.")
   parser.add_argument(
       "--cxx_flags",
       default=[],
@@ -227,6 +228,9 @@ def get_cmake_os_cpu(os, cpu):
     }
     return "Linux", target_cpu_map[cpu]
 
+  if os == "horizon":
+    return "Linux", "aarch64"
+
   if os == "mac":
     target_cpu_map = {
       "arm64": "arm64",
@@ -362,7 +366,7 @@ def combine_into_library(args, output_path, build_dir, target_os, object_files):
         linker_exe, "/LIB", f"/OUT:{lib_name}", f"@{response_file_name}"
     ]
   else:
-    combine_obj_cmd = ["ar", "rcs", lib_name] + object_files
+    combine_obj_cmd = [args.ar, "rcs", lib_name] + object_files
   subprocess.run(combine_obj_cmd, cwd=build_dir, check=True)
 
   copy_if_changed(gen_library_path, os.path.join(os.getcwd(), output_path))

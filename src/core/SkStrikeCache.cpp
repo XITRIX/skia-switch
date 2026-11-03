@@ -13,6 +13,7 @@
 #include "include/private/SkAPI.h"
 #include "include/private/SkAssert.h"
 #include "include/private/SkDebug.h"
+#include "include/private/SkFeatures.h"
 #include "include/private/SkMutex.h"
 #include "src/core/SkContextPriv.h"
 #include "src/core/SkDescriptor.h"
@@ -23,6 +24,10 @@
 #include <algorithm>
 #include <utility>
 
+#if defined(SK_BUILD_FOR_HORIZON)
+#include <pthread.h>
+#endif
+
 class SkScalerContext;
 struct SkFontMetrics;
 
@@ -30,7 +35,21 @@ using namespace sktext;
 
 SkStrikeCache* SkStrikeCache::GlobalStrikeCache() {
 #if defined(SK_ENABLE_THREADLOCAL_STRIKECACHE)
+#if defined(SK_BUILD_FOR_HORIZON)
+    // Use libnx pthread storage rather than assuming an ELF hardware TLS base.
+    static pthread_key_t cacheKey;
+    static pthread_once_t cacheKeyOnce = PTHREAD_ONCE_INIT;
+    SkASSERT_RELEASE(pthread_once(&cacheKeyOnce, [] {
+        SkASSERT_RELEASE(pthread_key_create(&cacheKey, nullptr) == 0);
+    }) == 0);
+    auto* cache = static_cast<SkStrikeCache*>(pthread_getspecific(cacheKey));
+    if (!cache) {
+        cache = new SkStrikeCache;
+        SkASSERT_RELEASE(pthread_setspecific(cacheKey, cache) == 0);
+    }
+#else
     static thread_local auto* cache = new SkStrikeCache;
+#endif
     return cache;
 #else
     return SkContexts::GetGlobalSkContext()->priv().sharedContext()->strikeCache();
@@ -339,5 +358,4 @@ const SkDescriptor& SkStrikeCache::StrikeTraits::GetKey(const sk_sp<SkStrike>& s
 uint32_t SkStrikeCache::StrikeTraits::Hash(const SkDescriptor& descriptor) {
     return descriptor.getChecksum();
 }
-
 

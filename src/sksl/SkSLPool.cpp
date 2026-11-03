@@ -9,11 +9,35 @@
 #include "src/sksl/SkSLMemoryPool.h"
 #include "src/sksl/SkSLPool.h"
 
+#if defined(SK_BUILD_FOR_HORIZON)
+#include <pthread.h>
+#endif
+
 #define SkVLOG(...) // SkDEBUGF(__VA_ARGS__)
 
 namespace SkSL {
 
-static thread_local MemoryPool* sMemPool = nullptr;
+#if defined(SK_BUILD_FOR_HORIZON)
+// Horizon's TPIDR_EL0 is not a C++ TLS base. Use libnx's pthread-key storage
+// so SkSL pools remain isolated when Graphite compiles on worker threads.
+static pthread_key_t sMemPoolKey;
+static pthread_once_t sMemPoolKeyOnce = PTHREAD_ONCE_INIT;
+
+static void initialize_memory_pool_key() {
+    SkASSERT_RELEASE(pthread_key_create(&sMemPoolKey, nullptr) == 0);
+}
+
+static MemoryPool* get_thread_local_memory_pool() {
+    SkASSERT_RELEASE(pthread_once(&sMemPoolKeyOnce, initialize_memory_pool_key) == 0);
+    return static_cast<MemoryPool*>(pthread_getspecific(sMemPoolKey));
+}
+
+static void set_thread_local_memory_pool(MemoryPool* memPool) {
+    SkASSERT_RELEASE(pthread_once(&sMemPoolKeyOnce, initialize_memory_pool_key) == 0);
+    SkASSERT_RELEASE(pthread_setspecific(sMemPoolKey, memPool) == 0);
+}
+#else
+static SK_THREAD_LOCAL MemoryPool* sMemPool = nullptr;
 
 static MemoryPool* get_thread_local_memory_pool() {
     return sMemPool;
@@ -22,6 +46,7 @@ static MemoryPool* get_thread_local_memory_pool() {
 static void set_thread_local_memory_pool(MemoryPool* memPool) {
     sMemPool = memPool;
 }
+#endif
 
 Pool::Pool() = default;
 

@@ -1,0 +1,2 @@
+# Unified patches contain a single space for empty context lines.
+third_party/dawn/*.patch whitespace=-blank-at-eol

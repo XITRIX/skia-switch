@@ -338,9 +338,18 @@ const ShaderSnippet* ShaderCodeDictionary::getEntry(int codeSnippetID) const {
     if (IsSkiaKnownRuntimeEffect(codeSnippetID)) {
         int knownRTECodeSnippetID = codeSnippetID - kSkiaKnownRuntimeEffectsStart;
 
-        // TODO(b/238759147): if the snippet hasn't been initialized, get the SkRuntimeEffect and
-        // initialize it here
-        SkASSERT(fKnownRuntimeEffectCodeSnippets[knownRTECodeSnippetID].fPreambleGenerator);
+        // Serialized keys can be replayed before normal drawing has registered
+        // this builtin effect. Initialize its metadata under the dictionary lock.
+        if (!fKnownRuntimeEffectCodeSnippets[knownRTECodeSnippetID].fPreambleGenerator) {
+            const auto stableKey = static_cast<StableKey>(codeSnippetID);
+            const SkRuntimeEffect* effect = GetKnownRuntimeEffect(stableKey);
+            if (!effect) {
+                return nullptr;
+            }
+            auto* self = const_cast<ShaderCodeDictionary*>(this);
+            self->fKnownRuntimeEffectCodeSnippets[knownRTECodeSnippetID] =
+                    self->convertRuntimeEffect(effect, get_known_rte_name(stableKey));
+        }
         return &fKnownRuntimeEffectCodeSnippets[knownRTECodeSnippetID];
     }
 
