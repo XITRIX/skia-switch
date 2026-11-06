@@ -22,6 +22,7 @@
 #include "src/gpu/graphite/ClipStack.h"
 #include "src/gpu/graphite/ResourceTypes.h"
 #include "src/gpu/graphite/draw/DrawOrder.h"
+#include "src/gpu/graphite/draw/DrawContext.h"
 #include "src/gpu/graphite/geom/Rect.h"
 #include "src/gpu/graphite/geom/Transform.h"
 #include "src/partition_alloc/raw_ptr.h"
@@ -119,6 +120,11 @@ public:
     Device* asGraphiteDevice() override { return this; }
 
     Recorder* recorder() const override { return fRecorder; }
+
+    bool peekPendingClearColor(std::array<float,4>* color) const {
+        return fDC && fDC->peekPendingClearColor(color);
+    }
+
     SkRecorder* baseRecorder() const override { return fRecorder; }
 
     // This call is triggered from the Recorder on its registered Devices. It is typically called

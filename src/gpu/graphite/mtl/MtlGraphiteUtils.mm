@@ -67,6 +67,15 @@ sk_cfp<id<MTLLibrary>> MtlCompileShaderLibrary(const MtlSharedContext* sharedCon
                                                std::string_view msl,
                                                ShaderErrorHandler* errorHandler) {
     TRACE_EVENT0("skia.shaders", "driver_compile_shader");
+    if (auto* cache = sharedContext->pipelineCache()) {
+        auto library = cache->loadLibrary(msl);
+        if (library) return sk_cfp<id<MTLLibrary>>((id<MTLLibrary>)library.release());
+        if (!cache->allowsRuntimeCompilation()) {
+            std::string source(msl);
+            errorHandler->compileError(source.c_str(), "Required precompiled Metal library missing", true);
+            return nil;
+        }
+    }
     NSString* nsSource = [[NSString alloc] initWithBytesNoCopy:const_cast<char*>(msl.data())
                                                         length:msl.size()
                                                       encoding:NSUTF8StringEncoding
@@ -95,6 +104,9 @@ sk_cfp<id<MTLLibrary>> MtlCompileShaderLibrary(const MtlSharedContext* sharedCon
                                                      encoding:NSUTF8StringEncoding
                                                  freeWhenDone:NO];
     compiledLibrary.get().label = nsLabel;
+    if (auto* cache = sharedContext->pipelineCache()) {
+        cache->didCompileLibrary(msl, (CFTypeRef)compiledLibrary.get());
+    }
     return compiledLibrary;
 }
 

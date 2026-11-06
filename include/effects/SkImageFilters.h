@@ -16,6 +16,7 @@
 #include "include/core/SkRect.h"
 #include "include/core/SkRefCnt.h"
 #include "include/core/SkScalar.h"
+#include "include/core/SkSize.h"
 #include "include/core/SkShader.h"
 #include "include/core/SkTileMode.h"
 #include "include/core/SkTypes.h"
@@ -473,6 +474,20 @@ public:
                                               const sk_sp<SkImageFilter> inputs[],
                                               int inputCount,
                                               bool restrictOutputToInputBounds = false);
+
+    /** NXKit extension: independent maximum sampling offsets along each parameter-space axis.
+     * Output remains unrestricted. Serialization conservatively retains the larger radius for
+     * both axes, preserving pixels while losing only the directional allocation optimization.
+     */
+    static sk_sp<SkImageFilter> RuntimeShader(const SkRuntimeEffectBuilder& builder,
+                                              SkSize sampleRadius,
+                                              std::string_view childShaderName,
+                                              sk_sp<SkImageFilter> input);
+    static sk_sp<SkImageFilter> RuntimeShader(const SkRuntimeEffectBuilder& builder,
+                                              SkSize maxSampleRadius,
+                                              std::string_view childShaderNames[],
+                                              const sk_sp<SkImageFilter> inputs[],
+                                              int inputCount);
 
     enum class Dither : bool {
         kNo = false,

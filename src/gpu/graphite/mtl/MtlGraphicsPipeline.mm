@@ -398,6 +398,10 @@ sk_sp<MtlGraphicsPipeline> MtlGraphicsPipeline::Make(const MtlSharedContext* sha
     (*psoDescriptor).label = labelName;
     (*psoDescriptor).vertexFunction = [vsLibrary newFunctionWithName: vsFuncName];
     (*psoDescriptor).fragmentFunction = [fsLibrary newFunctionWithName: fsFuncName];
+    if (sharedContext->pipelineCache()) {
+        (*psoDescriptor).vertexFunction.label = vsLibrary.label;
+        (*psoDescriptor).fragmentFunction.label = fsLibrary.label;
+    }
 
     // TODO: I *think* this gets cleaned up by the pipelineDescriptor?
     (*psoDescriptor).vertexDescriptor = create_vertex_descriptor(appendStepFunc,
@@ -424,10 +428,18 @@ sk_sp<MtlGraphicsPipeline> MtlGraphicsPipeline::Make(const MtlSharedContext* sha
         (*psoDescriptor).depthAttachmentPixelFormat = MTLPixelFormatInvalid;
     }
 
-    NSError* error;
-    sk_cfp<id<MTLRenderPipelineState>> pso(
-            [sharedContext->device() newRenderPipelineStateWithDescriptor:psoDescriptor.get()
-                                                                    error:&error]);
+    NSError* error = nil;
+    sk_cfp<CFTypeRef> cachedError;
+    sk_cfp<id<MTLRenderPipelineState>> pso;
+    if (auto* cache = sharedContext->pipelineCache()) {
+        auto native = cache->makeRenderPipeline((CFTypeRef)sharedContext->device(),
+                                                (CFTypeRef)psoDescriptor.get(), &cachedError);
+        pso.reset((id<MTLRenderPipelineState>)native.release());
+        error = (NSError*)cachedError.get();
+    } else {
+        pso.reset([sharedContext->device() newRenderPipelineStateWithDescriptor:psoDescriptor.get()
+                                                                        error:&error]);
+    }
     if (!pso) {
         SKIA_LOG_E("Render pipeline creation failure:\n%s", error.debugDescription.UTF8String);
         return nullptr;

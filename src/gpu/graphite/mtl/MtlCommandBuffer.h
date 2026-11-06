@@ -159,6 +159,10 @@ private:
 
     void bindUniformBuffers();
 
+    // A full clear with no draws remains uniform across read-only snapshots.
+    // Keep it only within this command buffer; uncertain writes invalidate it.
+    sk_sp<const Texture> fKnownClearTexture;
+    std::array<float, 4> fKnownClearColor = {};
     sk_cfp<id<MTLCommandBuffer>> fCommandBuffer;
     sk_sp<MtlRenderCommandEncoder> fActiveRenderCommandEncoder;
     sk_sp<MtlComputeCommandEncoder> fActiveComputeCommandEncoder;

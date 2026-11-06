@@ -78,6 +78,14 @@ public:
 
     int renderStepCount() const { return fRenderStepCount; }
 
+    // Read-only: describes the target after pending work without flushing it.
+    bool peekPendingClearColor(std::array<float,4>* color) const {
+        if (fRenderStepCount != 0 || fLoadOp != LoadOp::kClear) return false;
+        *color = fClearColor;
+        return true;
+    }
+
+
     bool modifiesTarget() const {
         return this->renderStepCount() > 0 || fLoadOp == LoadOp::kClear;
     }

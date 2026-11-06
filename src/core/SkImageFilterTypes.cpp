@@ -1346,6 +1346,9 @@ sk_sp<SkShader> FilterResult::asShader(const Context& ctx,
     SkBlendMode colorFilterMode;
     SkEnumBitMask<BoundsAnalysis> analysis = this->analyzeBounds(sampleBounds,
                                                                  BoundsScope::kShaderOnly);
+    if ((flags & ShaderFlags::kStableRuntimeSampling) && fTileMode == SkTileMode::kDecal) {
+        analysis |= BoundsAnalysis::kRequiresDecalInLayerSpace;
+    }
 
     SkSamplingOptions sampling = xtraSampling;
     const bool needsResolve =
@@ -1382,6 +1385,10 @@ sk_sp<SkShader> FilterResult::asShader(const Context& ctx,
                     BoundsAnalysis::kDstBoundsNotCovered | BoundsAnalysis::kRequiresShaderTiling;
             analysis = resolved.analyzeBounds(sampleBounds, BoundsScope::kShaderOnly);
             SkASSERT(!(analysis & ~kExpectedAnalysis));
+            if ((flags & ShaderFlags::kStableRuntimeSampling) &&
+                resolved.fTileMode == SkTileMode::kDecal) {
+                analysis |= BoundsAnalysis::kRequiresDecalInLayerSpace;
+            }
             return resolved.getAnalyzedShaderView(ctx, sampling, analysis);
         }
     } else {

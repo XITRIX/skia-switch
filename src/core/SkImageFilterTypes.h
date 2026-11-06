@@ -826,6 +826,9 @@ public:
         // how to sample any input FilterResults, so their sampling options should not be converted
         // to nearest-neighbor even if they appeared pixel-aligned with the output surface.
         kNonTrivialSampling = 1 << 1,
+        // Keep an explicit decal node even when bounds analysis could elide
+        // it. Animated runtime-filter inputs then share one pipeline graph.
+        kStableRuntimeSampling = 1 << 2,
         // TODO: Add option to convey that the output can carry input tiling forward to make a
         // smaller backing surface somehow. May not be a flag and just args passed to eval().
     };

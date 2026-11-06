@@ -39,6 +39,7 @@ public:
     skgpu::MtlMemoryAllocator* memoryAllocator() const { return fMemoryAllocator.get(); }
 
     id<MTLDevice> device() const { return fDevice.get(); }
+    MtlPipelineCache* pipelineCache() const { return fPipelineCache.get(); }
 
     const MtlCaps& mtlCaps() const { return static_cast<const MtlCaps&>(*this->caps()); }
 
@@ -74,6 +75,7 @@ private:
     sk_sp<skgpu::MtlMemoryAllocator> fMemoryAllocator;
 
     sk_cfp<id<MTLDevice>> fDevice;
+    std::shared_ptr<MtlPipelineCache> fPipelineCache;
 
     // In the current Graphite class structure 'fDepthStencilStates' would more appropriately
     // go in a new MtlGlobalCache class. However, GlobalCache may go away as a concept, in

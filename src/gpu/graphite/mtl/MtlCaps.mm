@@ -24,6 +24,7 @@
 #include "src/gpu/graphite/mtl/MtlGraphiteUtils.h"
 #include "src/gpu/mtl/MtlUtilsPriv.h"
 #include "src/sksl/SkSLUtil.h"
+#include <TargetConditionals.h>
 
 namespace skgpu::graphite {
 
@@ -147,7 +148,9 @@ void MtlCaps::initCaps(const id<MTLDevice> device) {
     // Dual source blending requires Metal 1.2, but our minimum requirements ensure 2.2
     shaderCaps->fDualSourceBlendingSupport = true;
     shaderCaps->fVectorClampMinMaxSupport = !isIntel;
-    if (this->isApple()) {
+    // The simulator reports Apple GPU families but rejects render-target reads.
+    // Let Graphite use its destination-copy path on that backend.
+    if (this->isApple() && !TARGET_OS_SIMULATOR) {
         shaderCaps->fFBFetchSupport = true;
         shaderCaps->fFBFetchColorName = "sk_LastFragColor";
     }

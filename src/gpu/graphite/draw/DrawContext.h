@@ -71,6 +71,11 @@ public:
 
     int pendingRenderSteps() const { return fPendingDraws->renderStepCount(); }
 
+    bool peekPendingClearColor(std::array<float,4>* color) const {
+        return fPendingUploads->size() == 0 && fPendingDraws->peekPendingClearColor(color);
+    }
+
+
     bool modifiesTarget() const { return fPendingDraws->modifiesTarget(); }
 
     bool readsTexture(const TextureProxy*) const;

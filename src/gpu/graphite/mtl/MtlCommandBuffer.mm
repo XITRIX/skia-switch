@@ -6,6 +6,9 @@
  */
 
 #include "src/gpu/graphite/mtl/MtlCommandBuffer.h"
+#include <atomic>
+#include <cmath>
+#include <cstdlib>
 
 #include "include/gpu/graphite/BackendSemaphore.h"
 #include "include/gpu/graphite/mtl/MtlGraphiteTypes.h"
@@ -97,6 +100,7 @@ bool MtlCommandBuffer::commit() {
 }
 
 void MtlCommandBuffer::onResetCommandBuffer() {
+    fKnownClearTexture.reset();
     fCommandBuffer.reset();
     fActiveRenderCommandEncoder.reset();
     fActiveComputeCommandEncoder.reset();
@@ -111,6 +115,7 @@ void MtlCommandBuffer::onResetCommandBuffer() {
 
 void MtlCommandBuffer::addWaitSemaphores(size_t numWaitSemaphores,
                                          const BackendSemaphore* waitSemaphores) {
+    if (numWaitSemaphores) fKnownClearTexture.reset();
     if (!waitSemaphores) {
         SkASSERT(numWaitSemaphores == 0);
         return;
@@ -133,6 +138,7 @@ void MtlCommandBuffer::addWaitSemaphores(size_t numWaitSemaphores,
 
 void MtlCommandBuffer::addSignalSemaphores(size_t numSignalSemaphores,
                                            const BackendSemaphore* signalSemaphores) {
+    if (numSignalSemaphores) fKnownClearTexture.reset();
     if (!signalSemaphores) {
         SkASSERT(numSignalSemaphores == 0);
         return;
@@ -162,8 +168,12 @@ bool MtlCommandBuffer::onAddRenderPass(const RenderPassDesc& renderPassDesc,
                                        const DrawPassList& drawPasses) {
     SkASSERT(resolveOffset.isZero());
     if (!this->beginRenderPass(renderPassDesc, colorTexture, resolveTexture, depthStencilTexture)) {
+        fKnownClearTexture.reset();
         return false;
     }
+    // beginRenderPass may consume the previous clear. All other rendering
+    // invalidates it, including writes through an unrelated texture view.
+    fKnownClearTexture.reset();
 
     this->setViewport(viewport.x(), viewport.y(), viewport.width(), viewport.height(), 0, 1);
     this->updateIntrinsicUniforms(viewport);
@@ -176,10 +186,31 @@ bool MtlCommandBuffer::onAddRenderPass(const RenderPassDesc& renderPassDesc,
     }
 
     this->endRenderPass();
+    const bool empty = std::all_of(drawPasses.begin(), drawPasses.end(),
+                                  [](const auto& pass) { return pass->pipelineHandles().empty(); });
+    const Texture* cleared = resolveTexture ? resolveTexture : colorTexture;
+    const auto stored = resolveTexture ? renderPassDesc.fColorResolveAttachment.fStoreOp
+                                      : renderPassDesc.fColorAttachment.fStoreOp;
+    if (empty && colorTexture && cleared &&
+        renderPassDesc.fColorAttachment.fLoadOp == LoadOp::kClear && stored == StoreOp::kStore &&
+        (!resolveTexture || (colorTexture->dimensions() == resolveTexture->dimensions() &&
+            static_cast<const MtlTexture*>(colorTexture)->mtlTexture().pixelFormat ==
+            static_cast<const MtlTexture*>(resolveTexture)->mtlTexture().pixelFormat))) {
+        id<MTLTexture> texture = static_cast<const MtlTexture*>(cleared)->mtlTexture();
+        const auto& color = renderPassDesc.fClearColor;
+        // Buffer-backed/parented views may alias otherwise unrelated writes.
+        if (texture.textureType == MTLTextureType2D && texture.sampleCount == 1 &&
+            !texture.parentTexture && !texture.buffer &&
+            std::all_of(color.begin(), color.end(), [](float v) { return std::isfinite(v); })) {
+            fKnownClearTexture = sk_ref_sp(cleared);
+            fKnownClearColor = color;
+        }
+    }
     return true;
 }
 
 bool MtlCommandBuffer::onAddComputePass(DispatchGroupSpan groups) {
+    fKnownClearTexture.reset();
     this->beginComputePass();
     for (const auto& group : groups) {
         group->addResourceRefs(this);
@@ -280,6 +311,24 @@ bool MtlCommandBuffer::beginRenderPass(const RenderPassDesc& renderPassDesc,
             colorAttachment.storeAction = MTLStoreActionMultisampleResolve;
             // But it also means we have to load the resolve texture into the MSAA color attachment
             loadMSAAFromResolve = resolveInfo.fLoadOp == LoadOp::kLoad;
+            static const bool knownClearEnabled = [] {
+                const auto flag = std::getenv("SKIA_DISABLE_KNOWN_CLEAR_MSAA_LOAD");
+                return !flag || flag[0] != '1';
+            }();
+            if (loadMSAAFromResolve && knownClearEnabled && fKnownClearTexture &&
+                static_cast<const MtlTexture*>(fKnownClearTexture.get())->mtlTexture() == colorAttachment.resolveTexture &&
+                colorAttachment.texture.pixelFormat == colorAttachment.resolveTexture.pixelFormat) {
+                // The already-stored single-sample texels contain only this
+                // clear. Clearing the matching MSAA attachment reproduces
+                // their format conversion without a fullscreen texture load.
+                const auto& c = fKnownClearColor;
+                colorAttachment.loadAction = MTLLoadActionClear;
+                colorAttachment.clearColor = MTLClearColorMake(c[0], c[1], c[2], c[3]);
+                loadMSAAFromResolve = false;
+                static const bool log = std::getenv("SKIA_METAL_CLEAR_LOAD_DIAGNOSTICS") != nullptr;
+                static std::atomic_flag printed = ATOMIC_FLAG_INIT;
+                if (log && !printed.test_and_set()) SkDebugf("Metal known-clear MSAA load elided %lux%lu\n",(unsigned long)colorAttachment.resolveTexture.width,(unsigned long)colorAttachment.resolveTexture.height);
+            }
             // TODO: If the color resolve texture is read-only we can use a private (vs. memoryless)
             // msaa attachment that's coupled to the framebuffer and the StoreAndMultisampleResolve
             // action instead of loading as a draw.
@@ -862,6 +911,7 @@ bool MtlCommandBuffer::onCopyBufferToBuffer(const Buffer* srcBuffer,
                                             const Buffer* dstBuffer,
                                             size_t dstOffset,
                                             size_t size) {
+    fKnownClearTexture.reset();
     SkASSERT(!fActiveRenderCommandEncoder);
     SkASSERT(!fActiveComputeCommandEncoder);
 
@@ -888,6 +938,7 @@ bool MtlCommandBuffer::onCopyTextureToBuffer(const Texture* texture,
                                              const Buffer* buffer,
                                              size_t bufferOffset,
                                              size_t bufferRowBytes) {
+    fKnownClearTexture.reset();
     SkASSERT(!fActiveRenderCommandEncoder);
     SkASSERT(!fActiveComputeCommandEncoder);
 
@@ -917,6 +968,7 @@ bool MtlCommandBuffer::onCopyBufferToTexture(const Buffer* buffer,
                                              const Texture* texture,
                                              const BufferTextureCopyData* copyData,
                                              int count) {
+    fKnownClearTexture.reset();
     SkASSERT(!fActiveRenderCommandEncoder);
     SkASSERT(!fActiveComputeCommandEncoder);
 
@@ -960,6 +1012,13 @@ bool MtlCommandBuffer::onCopyTextureToTexture(const Texture* src,
 
     id<MTLTexture> srcMtlTexture = static_cast<const MtlTexture*>(src)->mtlTexture();
     id<MTLTexture> dstMtlTexture = static_cast<const MtlTexture*>(dst)->mtlTexture();
+    if (fKnownClearTexture) {
+        id<MTLTexture> root = dstMtlTexture;
+        while (root.parentTexture) root = root.parentTexture;
+        const auto known = static_cast<const MtlTexture*>(fKnownClearTexture.get())->mtlTexture();
+        const bool surfaceAlias = root.iosurface && root.iosurface == known.iosurface;
+        if (srcMtlTexture != known || root == known || surfaceAlias) fKnownClearTexture.reset();
+    }
 
     MtlBlitCommandEncoder* blitCmdEncoder = this->getBlitCommandEncoder();
     if (!blitCmdEncoder) {
@@ -1013,6 +1072,7 @@ bool MtlCommandBuffer::onSynchronizeBufferToCpu(const Buffer* buffer, bool* outD
 }
 
 bool MtlCommandBuffer::onClearBuffer(const Buffer* buffer, size_t offset, size_t size) {
+    fKnownClearTexture.reset();
     SkASSERT(!fActiveRenderCommandEncoder);
     SkASSERT(!fActiveComputeCommandEncoder);
 

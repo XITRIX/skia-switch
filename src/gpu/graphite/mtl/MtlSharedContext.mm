@@ -21,6 +21,8 @@
 
 namespace skgpu::graphite {
 
+int MetalPipelineCacheVersion() { return 1; }
+
 sk_sp<SharedContext> MtlSharedContext::Make(const MtlBackendContext& context,
                                             const ContextOptions& options) {
     if (@available(macOS 12, iOS 15.0, tvOS 15.0, *)) {
@@ -46,11 +48,13 @@ sk_sp<SharedContext> MtlSharedContext::Make(const MtlBackendContext& context,
         return nullptr;
     }
 
-    return sk_sp<SharedContext>(new MtlSharedContext(std::move(device),
+    auto shared = sk_sp<MtlSharedContext>(new MtlSharedContext(std::move(device),
                                                      std::move(memoryAllocator),
                                                      std::move(caps),
                                                      options.fExecutor,
                                                      options.fUserDefinedKnownRuntimeEffects));
+    shared->fPipelineCache = context.fPipelineCache;
+    return shared;
 }
 
 MtlSharedContext::MtlSharedContext(sk_cfp<id<MTLDevice>> device,
